@@ -1,56 +1,61 @@
 const express = require("express");
-const fs = require("fs");
 const cors = require("cors");
+const mongoose = require("mongoose");
+const Contact = require("./contact"); // Importing your existing Mongoose schema
+
+// Load environment variables for local testing
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
 
 const app = express();
-const PORT = process.env.PORT || 5000;  // CHANGE THIS LINE
-
 app.use(cors());
 app.use(express.json());
 
-const LEADS_FILE = "./leads.json";
-
-// Create leads.json if missing
-if (!fs.existsSync(LEADS_FILE)) {
-  fs.writeFileSync(LEADS_FILE, "[]");
-}
+// Connect to MongoDB
+mongoose.connect(process.env.MONGO_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true
+}).then(() => console.log("MongoDB Connected"))
+  .catch(err => console.log("MongoDB Connection Error:", err));
 
 // ================= CONTACT FORM =================
+app.post("/contact", async (req, res) => {
+  try {
+    const { name, phone, email, service, message } = req.body;
 
-app.post("/contact", (req, res) => {
-  const { name, phone, email, service, message } = req.body;
+    if (!name || !phone) {
+      return res.status(400).json({ success: false, message: "Name and phone required" });
+    }
 
-  if (!name || !phone) {
-    return res.json({ success: false });
+    // Save lead to MongoDB
+    const newLead = new Contact({ name, phone, email, service, message });
+    await newLead.save();
+
+    res.json({
+      success: true,
+      whatsapp: `https://api.whatsapp.com/send?phone=919137426363&text=New Lead:%0AName:${name}%0APhone:${phone}%0AService:${service}`
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
-
-  const newLead = {
-    name,
-    phone,
-    email,
-    service,
-    message,
-    date: new Date().toLocaleString()
-  };
-
-  const leads = JSON.parse(fs.readFileSync(LEADS_FILE));
-  leads.push(newLead);
-
-  fs.writeFileSync(LEADS_FILE, JSON.stringify(leads, null, 2));
-
-  res.json({
-    success: true,
-    whatsapp: `https://api.whatsapp.com/send?phone=919137426363&text=New Lead:%0AName:${name}%0APhone:${phone}%0AService:${service}`
-  });
 });
 
 // ================= GET LEADS =================
-
-app.get("/leads", (req, res) => {
-  const leads = JSON.parse(fs.readFileSync(LEADS_FILE));
-  res.json(leads);
+app.get("/leads", async (req, res) => {
+  try {
+    const leads = await Contact.find().sort({ createdAt: -1 }); // Newest first
+    res.json(leads);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+// Export the app for Vercel Serverless functionality
+module.exports = app;
+
+// Keep the server listening for local testing
+if (process.env.NODE_ENV !== 'production') {
+    const PORT = process.env.PORT || 5000;
+    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+}
